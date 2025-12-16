@@ -24,7 +24,7 @@ def process_emit(lat, lon, start_date='2025-01-01', end_date='2025-12-31'):
     try:
         ee.Initialize()
     except Exception as e:
-        return {"error": f"Error initializing Earth Engine: {e}"}
+        return {"error": f"Error initializing Earth Engine: {e}"}, None
 
     # 1. Get Data
     image, point = get_emit_image(lat, lon, start_date, end_date)
@@ -43,19 +43,19 @@ def process_emit(lat, lon, start_date='2025-01-01', end_date='2025-12-31'):
         # Helper to get info (client side fetch)
         info = ref_image.getInfo()
         if not info:
-            return {"error": "No data found for this location/date."}
+            return {"error": "No data found for this location/date."}, None
 
         bands = info.get('bands', [])
         properties = info.get('properties', {})
         wavelengths = properties.get('wavelengths')
 
         if not wavelengths:
-            return {"error": "Could not extract wavelengths from metadata. Property 'wavelengths' missing."}
+            return {"error": "Could not extract wavelengths from metadata. Property 'wavelengths' missing."}, None
 
         band_names = [b['id'] for b in bands]
 
     except Exception as e:
-        return {"error": f"Metadata extraction failed: {e}"}
+        return {"error": f"Metadata extraction failed: {e}"}, None
 
     # Map bands to wavelengths
     def find_nearest_idx(target):
@@ -70,7 +70,7 @@ def process_emit(lat, lon, start_date='2025-01-01', end_date='2025-12-31'):
     # Identify SWIR bands (2000-2500 nm)
     swir_indices = [i for i, w in enumerate(wavelengths) if 2000 <= w <= 2500]
     if not swir_indices:
-        return {"error": "No bands found in 2000-2500nm range."}
+        return {"error": "No bands found in 2000-2500nm range."}, None
 
     swir_bands = [band_names[i] for i in swir_indices]
     swir_wavelengths = [wavelengths[i] for i in swir_indices]
@@ -168,10 +168,21 @@ def process_emit(lat, lon, start_date='2025-01-01', end_date='2025-12-31'):
     output = {
         "spatial_mean": stats_mean.getInfo(),
         "center_pixel": center_stats.getInfo(),
-        "full_spectrum": center_spectrum.getInfo()
+        "full_spectrum": center_spectrum.getInfo(),
+        "metadata": {
+            "wavelengths": wavelengths,
+            "band_names": band_names
+        }
     }
 
-    return output, final_image
+    images = {
+        "processed": final_image,
+        "original": image,
+        "ndvi": ndvi,
+        "mask": valid_mask
+    }
+
+    return output, images
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:
@@ -185,7 +196,12 @@ if __name__ == "__main__":
         print("Error: Latitude and Longitude must be numbers.")
         sys.exit(1)
 
-    result_json, result_image = process_emit(lat, lon)
+    result_json, images = process_emit(lat, lon)
+
+    if images is None:
+        # Error case
+        print(json.dumps(result_json, indent=2))
+        sys.exit(1)
 
     # Output JSON to stdout
     print(json.dumps(result_json, indent=2))
